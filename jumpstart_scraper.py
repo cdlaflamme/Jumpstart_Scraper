@@ -5,6 +5,7 @@
 from urllib.request import urlopen #webpage downloads
 import re #regex
 import time #for sleeping to be polite
+from PIL import Image, ImageDraw, ImageFont #for creating the allocation deck
 
 # ====== setup =============
 base_url = "https://tappedout.net/mtg-decks/jumpstart-pack-"
@@ -14,19 +15,37 @@ url_suffix = "/"
 SLEEP_FACTOR = 1 #I like the funny name
 X_SPACE =  2.5  #padding between packs in the X direction, in unknown units. experimentally determined a good value
 Z_SPACE = -3.5 #ibid but on Z axis
+CARD_DIMS = (409,585) #optimal pixel dimensions for TTS card images
 
 #create the output file
 out_f = open("jumpstart_pack_grid.json","w")
 out_f.write('{"ObjectStates":[\n') #prefix for the file
 
+#prepare image creation stuff
+FONT_SIZE = 30
+CARD_BG_COLOR = (240,240,240)
+CARD_TEXT_COLOR = (12,12,12)
+card_font = ImageFont.truetype('Titillium/Titillium-Regular.otf',FONT_SIZE)
+
+
 # ======== scraping ===========
 #for each pack, get card list
 for url_n in url_range:
     print("Processing pack number "+str(url_n)+"...")
-    time.sleep(SLEEP_FACTOR) #pause so we're not DDOS'ing anyone
+    time.sleep(SLEEP_FACTOR) #pause so we're not DDOS'ing anyone    
+    #combine URL pieces
     url = base_url+str(url_n)+url_suffix
     html = urlopen(url).read().decode("utf-8") #assuming utf-8 but it's fine
     
+    #create allocation card image
+    pack_description = re.findall('<p>.*?</p>',html)[2][3:-4]
+    img = Image.new('RGB',CARD_DIMS,color=CARD_BG_COLOR)
+    drawer = ImageDraw.Draw(img)
+    drawer.text((100,200),pack_description,font=card_font,fill=CARD_TEXT_COLOR)
+    drawer.text((150,300),str(url_n),font=card_font,fill=CARD_TEXT_COLOR)
+    img.save('selection_cards/pack_'+str(url_n)+'_card.png')
+    
+    #parse the pack
     card_plates = re.findall("boardContainer-main.*?>", html) #"plates" as in nameplates; getting unique strings from HTML for each card
     card_indices = [html.find(plate) for plate in card_plates] #locate each unique card in the page
     endpoints = card_indices #want to use indices to surround each card nameplate, need one more endpoint to surround final card
