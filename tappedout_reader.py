@@ -59,8 +59,10 @@ def main():
         #end loop
         
     # ====== setup ==============
-
     card_names = []
+    cmdr_names = []
+    cmdr_true_names = [] #support double-sided commanders
+    cmdr_fronts = []
     main_names = [] #double sided card names are different between scryfall and tappedout, scryfall's are better and are thus called "true" elsewhere
     main_fronts = []
     double_names = []
@@ -69,6 +71,7 @@ def main():
     token_names = []
     token_fronts = []
 
+    
     # ====== get card names ==============
     print("Fetching card names from tappedout...")
     tapped_html = urlopen(TAPPED_URL).read().decode("utf-8") #assuming utf-8 but it's fine
@@ -87,12 +90,18 @@ def main():
         quantity = int(re.findall("data-qty=\".*?\"", region)[0][10:-1])
         for j in range(quantity):
             card_names.append(name)
+    
+    #get commanders/companions! they do not use the same format if put on display.
+    cmdr_plates = re.findall('data-name=".*?[\S\W].*?<img class="commander-img"', tapped_html)
+    cmdr_name_regions = [re.findall('data-name=".*?"', plate)[0] for plate in cmdr_plates]
+    cmdr_names = [name[11:-1] for name in cmdr_name_regions]
 
     # ====== get card images ==============
     #get front and back images for all card names. 'main' deck has the front face of all cards, and gives them a static back. 'double' deck has only double-sided cards, and includes both sides.
     #this code is EVIL because if you're running 24 islands it will make scryfall api calls 24 times, once for each island. this is unnecessary and wasteful but I just want it to work at the moment
     print("Using Scryfall API to get card image URLs...")
-    for name in card_names:
+    num_main_cards = len(card_names)
+    for i,name in enumerate(card_names+cmdr_names):
         #use scryfall api to get image URLs. add front url to main front list. if back is present, add correct faces to double front & back lists.
         sf_url = "http://api.scryfall.com/cards/named?exact="+name
         #print('\t'+sf_url) #for debugging urls
@@ -103,9 +112,14 @@ def main():
         
         assert len(all_images) > 0, "Error: Image of the specified size ('"+IMAGE_SIZE+"') not received from scryfall."
         
-        main_names.append(true_name)
         front_url = all_images[0][len(IMAGE_SIZE)+4:-1]
-        main_fronts.append(front_url)
+        
+        if i >= num_main_cards: #this is a commander/companion, should not put it in the main deck (for convenience)
+            cmdr_true_names.append(true_name)
+            cmdr_fronts.append(front_url)
+        else:
+            main_names.append(true_name)
+            main_fronts.append(front_url)
         
         if len(all_images) > 1:    
             double_names.append(true_name)
@@ -132,9 +146,13 @@ def main():
     print("Assembling output JSON file...")
     #THIS IS WHERE THE MAGIC HAPPENS
     deckFile = DeckFile(OUT_PATH)
-    deckFile.addDeck(main_names, main_fronts, [BACK_URL])
-    deckFile.addDeck(double_names, double_fronts, double_backs) #TODO what if no double sided?
-    deckFile.addDeck(token_names, token_fronts, [BACK_URL]) #TODO what if no tokens?
+    deckFile.addDeck(main_names, main_fronts, [BACK_URL], faceDown=True) #main deck! assume there will always be cards.
+    if (len(cmdr_true_names) > 0):
+        deckFile.addDeck(cmdr_true_names, cmdr_fronts, [BACK_URL]) #commander/companion cards, if any
+    if (len(double_names) > 0):
+        deckFile.addDeck(double_names, double_fronts, double_backs) #double sided deck, if any
+    if (len(token_names) > 0):
+        deckFile.addDeck(token_names, token_fronts, [BACK_URL]) #token deck, if any
     deckFile.finish()
     #DONE
     print("Done.")
@@ -157,10 +175,18 @@ class DeckFile:
             self.file.write('{"ObjectStates":[')
             self.started = True
         
-    def addDeck(self, names, frontURLs, backURLs=None): #back URLs is optional. if omitted, uses default back. if length is one, uses the one element for every card. otherwise, treats fronts and backs as pairs.
+    def addDeck(self, names, frontURLs, backURLs=None, faceDown=False): #back URLs is optional. if omitted, uses default back. if length is one, uses the one element for every card. otherwise, treats fronts and backs as pairs.
         if (self.started == False):
             self.start()
         num_cards = len(names)
+        
+        if num_cards == 1: #for some reason TTS doesn't like decks with only one card! we need to write 1-card decks as just cards.
+            if backURLs != None:
+                self.addCard(names[0],frontURLs[0],backURLs[0], faceDown)
+            else:
+                self.addCard(names[0],frontURLs[0], faceDown = faceDown)
+            return
+        
         if (self.num_decks > 0):
             self.file.write(',')
         self.file.write('\n\t{\n\t\t"Name":"DeckCustom",\n\t\t"ContainedObjects":[')
@@ -185,7 +211,31 @@ class DeckFile:
             if (i!=0):
                 self.file.write(',')
             self.file.write('\n\t\t\t"'+str(i+1)+'":{"FaceURL":"'+frontURLs[i]+'","BackURL":"'+backURL+'","NumHeight":1,"NumWidth":1,"BackIsHidden":true}')
-        self.file.write('\n\t\t},\n\t\t"Transform":{"posX":'+str(self.num_decks*X_SPACE)+',"posY":0,"posZ":0,"rotX":0,"rotY":180,"rotZ":180,"scaleX":1,"scaleY":1,"scaleZ":1}\n\t}')
+        
+        rotZ = '180' if faceDown else '0'
+        
+        self.file.write('\n\t\t},\n\t\t"Transform":{"posX":'+str(self.num_decks*X_SPACE)+',"posY":0,"posZ":0,"rotX":0,"rotY":180,"rotZ":'+rotZ+',"scaleX":1,"scaleY":1,"scaleZ":1}\n\t}')
+        self.num_decks += 1
+    
+    def addCard(self, name, frontURL, backURL=None, faceDown=False):
+        if (self.started == False):
+            self.start()
+
+        if (self.num_decks > 0):
+            self.file.write(',')
+        self.file.write('\n\t{\n\t\t"Name":"Card",')
+        self.file.write('\n\t\t"Nickname":"'+name+'",')
+        self.file.write('\n\t\t"CardID":100,')
+        
+        if (backURL == None):
+            backURL = 'https://s3.amazonaws.com/frogtown.cards.hq/CardBack.jpg'
+        
+        rotZ = '180' if faceDown else '0'
+        
+        self.file.write('\n\t\t"CustomDeck":{')
+        self.file.write('\n\t\t\t"1":{"FaceURL":"'+frontURL+'","BackURL":"'+backURL+'","NumHeight":1,"NumWidth":1,"BackIsHidden":true}')
+        self.file.write('\n\t\t},\n\t\t"Transform":{"posX":'+str(self.num_decks*X_SPACE)+',"posY":0,"posZ":0,"rotX":0,"rotY":180,"rotZ":'+rotZ+',"scaleX":1,"scaleY":1,"scaleZ":1}\n\t}')
+        
         self.num_decks += 1
     
     def finish(self):
