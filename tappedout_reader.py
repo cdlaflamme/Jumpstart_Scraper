@@ -85,8 +85,7 @@ def main():
 
     for region_n,region in enumerate(card_regions):
         name = re.findall("data-orig=\".*?\"", region)[0][11:-1] #lots of magic numbers, but: we find the field containing the card name (data-orig) and trim the unwanted characters
-        name = re.sub("&#39;", "'", name) #replace strange apostrophe encodings. may have to do this with more punctiation.
-        name = re.sub(" ", "-", name) #replace spaces with dashes, as this sometimes (not always) causes problems. See "Acorn Harvest")
+        name = cleanName(name)
         quantity = int(re.findall("data-qty=\".*?\"", region)[0][10:-1])
         for j in range(quantity):
             card_names.append(name)
@@ -94,8 +93,8 @@ def main():
     #get commanders/companions! they do not use the same format if put on display.
     cmdr_plates = re.findall('data-name=".*?[\S\W].*?<img class="commander-img"', tapped_html)
     cmdr_name_regions = [re.findall('data-name=".*?"', plate)[0] for plate in cmdr_plates]
-    cmdr_names = [name[11:-1] for name in cmdr_name_regions]
-
+    cmdr_names = [cleanName(name[11:-1]) for name in cmdr_name_regions]
+    
     # ====== get card images ==============
     #get front and back images for all card names. 'main' deck has the front face of all cards, and gives them a static back. 'double' deck has only double-sided cards, and includes both sides.
     #this code is EVIL because if you're running 24 islands it will make scryfall api calls 24 times, once for each island. this is unnecessary and wasteful but I just want it to work at the moment
@@ -159,6 +158,12 @@ def main():
 
 # ====== functions and classes ==============
 
+def cleanName(name):
+    newName = name = re.sub("&#39;", "'", name) #replace strange apostrophe encodings. may have to do this with more punctiation.
+    newName = re.sub(" ", "-", newName) #replace spaces with dashes, as this sometimes (not always) causes problems. See "Acorn Harvest")
+    newName = re.sub(",", "", newName) #remove commas. this might be causing issues in some urllib versions
+    return newName
+    
 #usage: instantiate a DeckFile, giving it a file path. One can then call addDeck() any number of times, and MUST call finish to close the file.
 #All decks added will be a part of one "saved object", and all decks will be adjacent to each other when loaded in Tabletop Simulator.
 class DeckFile:
