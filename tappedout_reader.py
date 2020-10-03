@@ -57,7 +57,9 @@ def main():
                 return
         i+=1
         #end loop
-        
+    createDeckFile(TAPPED_URL, OUT_PATH, BACK_URL, IMAGE_SIZE)
+
+def createDeckFile(TAPPED_URL, OUT_PATH, BACK_URL, IMAGE_SIZE):
     # ====== setup ==============
     card_names = []
     cmdr_names = []
