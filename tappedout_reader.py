@@ -6,14 +6,16 @@
 #Does not currently allow for the printing to be selected. TODO determine which printing is used
 
 # ======= imports ============
-from urllib.request import urlopen #webpage downloads
+from urllib.request import urlopen, Request #webpage downloads
 import re #regex
 import time #for sleeping to be polite
 import sys #command line arguments
 
 # ====== constants =============
+HEADERS = {'User-Agent': 'Mozilla/5.0 (Windows NT 6.1) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/41.0.2228.0 Safari/537.3'} #spoofed browser headers so tappedout doesn't think I'm a bot... :(
 POLITENESS_DELAY = 0.1 #scryfall has nicely asked me to wait 100ms between requests.
 X_SPACE =  2.5  #padding between decks in the X direction, in unknown units. experimentally determined to be a good value
+DEFAULT_BACK_URL = 'i.imgur.com/LdOBU1I.jpg'
 
 def main():
     # ========= command line arguments =========
@@ -35,7 +37,7 @@ def main():
     
     #process optional arguments
     i = 3
-    BACK_URL = 'https://s3.amazonaws.com/frogtown.cards.hq/CardBack.jpg'
+    BACK_URL = DEFAULT_BACK_URL
     IMAGE_SIZE = 'normal'
     while i < num_args:
         if sys.argv[i] == '-cb':        #custom card back URL
@@ -72,12 +74,25 @@ def createDeckFile(TAPPED_URL, OUT_PATH, BACK_URL, IMAGE_SIZE):
     double_backs = []
     token_names = []
     token_fronts = []
-
     
+    if OUT_PATH[-5:].lower() != '.json':
+        OUT_PATH = OUT_PATH+'.json'
+    
+    DOWNLOAD_PATH = '../decks/'+OUT_PATH
+    OUT_PATH = '/var/www/html/decks/'+OUT_PATH
+    deckFile = DeckFile(OUT_PATH)
+    deckFile.start()
+    
+    if BACK_URL == "" or BACK_URL == None or BACK_URL is None:
+        BACK_URL = DEFAULT_BACK_URL
+
     # ====== get card names ==============
     print("Fetching card names from tappedout...")
-    tapped_html = urlopen(TAPPED_URL).read().decode("utf-8") #assuming utf-8 but it's fine
-
+    try:
+        tapped_request = Request(url=TAPPED_URL, headers=HEADERS)
+        tapped_html = urlopen(tapped_request).read().decode("utf-8") #assuming utf-8 but it's fine
+    except:
+        return "ERROR: Could not open tappedout URL: '"+TAPPED_URL+"'. Double check the URL. If this continues, tappedout has likely increased their ability to refuse service to bots. I'm a second class citizen :("
     #get list of card names from tappedout. for cards present multiple times, just add the name multiple times.
     card_plates = re.findall("boardContainer-main.*?>", tapped_html) #"plates" as in nameplates; getting unique strings from HTML for each card
     card_indices = [tapped_html.find(plate) for plate in card_plates] #locate each unique card in the page
@@ -106,10 +121,13 @@ def createDeckFile(TAPPED_URL, OUT_PATH, BACK_URL, IMAGE_SIZE):
         #use scryfall api to get image URLs. add front url to main front list. if back is present, add correct faces to double front & back lists.
         sf_url = "http://api.scryfall.com/cards/named?exact="+name
         #print('\t'+sf_url) #for debugging urls
-        sf_html = urlopen(sf_url).read().decode("utf-8") #the scryfall API ONLY uses utf-8, so we're not just assuming it here
+        try:
+            sf_html = urlopen(sf_url).read().decode("utf-8") #the scryfall API ONLY uses utf-8, so we're not just assuming it here
+        except:
+            return "ERROR: Could not fetch card: '"+name+"', URL: '"+sf_url+"'. Sometimes a card is spelled wrong in the tappedout list, or maybe the card is too new. When scryfall has it, we should be able to find it."
         time.sleep(POLITENESS_DELAY) #I'm a good citizen, I promise (please disregard the comment above that might cause you to believe I'm a bad citizen)
         true_name = re.findall('"name":".*?"',sf_html)[0][8:-1]
-        all_images = re.findall('"'+IMAGE_SIZE+'":".*?"',sf_html)
+        all_images = re.findall('"'+IMAGE_SIZE.lower()+'":".*?"',sf_html)
         
         assert len(all_images) > 0, "Error: Image of the specified size ('"+IMAGE_SIZE+"') not received from scryfall."
         
@@ -146,8 +164,8 @@ def createDeckFile(TAPPED_URL, OUT_PATH, BACK_URL, IMAGE_SIZE):
     # ====== assemble TTS object ==============
     print("Assembling output JSON file...")
     #THIS IS WHERE THE MAGIC HAPPENS
-    deckFile = DeckFile(OUT_PATH)
     deckFile.addDeck(main_names, main_fronts, [BACK_URL], faceDown=True) #main deck! assume there will always be cards.
+    #deckFile = DeckFile(OUT_PATH)
     if (len(cmdr_true_names) > 0):
         deckFile.addDeck(cmdr_true_names, cmdr_fronts, [BACK_URL]) #commander/companion cards, if any
     if (len(double_names) > 0):
@@ -157,6 +175,7 @@ def createDeckFile(TAPPED_URL, OUT_PATH, BACK_URL, IMAGE_SIZE):
     deckFile.finish()
     #DONE
     print("Done.")
+    return DOWNLOAD_PATH
 
 # ====== functions and classes ==============
 
@@ -210,7 +229,7 @@ class DeckFile:
         
         for i in range(num_cards):
             if (backURLs == None):
-                backURL = 'https://s3.amazonaws.com/frogtown.cards.hq/CardBack.jpg'
+                backURL = DEFAULT_BACK_URL
             elif (len(backURLs) == 1):
                 backURL = backURLs[0]
             else:
@@ -235,7 +254,7 @@ class DeckFile:
         self.file.write('\n\t\t"CardID":100,')
         
         if (backURL == None):
-            backURL = 'https://s3.amazonaws.com/frogtown.cards.hq/CardBack.jpg'
+            backURL = DEFAULT_BACK_URL
         
         rotZ = '180' if faceDown else '0'
         
